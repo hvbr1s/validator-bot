@@ -70,7 +70,7 @@ async def fordefi_webhook(request: Request):
     #    try using `_parse_raw_transaction` or see the official docs.
     
     try:
-        decoded_tx = w3.eth.account._parse_raw_transaction(raw_tx_hex)
+        decoded_tx = w3.eth.account.signing.decode_transaction(raw_tx_hex)
         # decoded_tx is typically a tuple like:
         #   (intrinsic_tx, tx_hash, sender, r, s, v)
         # 
