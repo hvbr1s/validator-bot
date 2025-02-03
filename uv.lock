@@ -435,6 +435,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "ecdsa" },
+    { name = "eth-account" },
     { name = "fastapi" },
     { name = "pip" },
     { name = "python-dotenv" },
@@ -447,6 +448,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "ecdsa", specifier = ">=0.19.0" },
+    { name = "eth-account", specifier = ">=0.13.4" },
     { name = "fastapi", specifier = ">=0.115.8" },
     { name = "pip", specifier = ">=25.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
