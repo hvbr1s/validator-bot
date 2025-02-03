@@ -33,6 +33,7 @@ async def verify_sig(request: Request):
             sigdecode=sigdecode_der,
         )
     except Exception as e:
+        print(e)
         valid = False
 
     if not valid:
@@ -51,7 +52,7 @@ async def fordefi_webhook(request: Request):
         print(request)
     else:
         # You might want to handle the error (e.g., return an error response)
-        print(status_message)
+        print(request)
 
     return {"message": "Webhook received"}
 
