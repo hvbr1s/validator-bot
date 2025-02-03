@@ -1,6 +1,5 @@
 import os
 import base64
-import requests
 import hashlib
 import ecdsa
 from dotenv import load_dotenv
@@ -14,34 +13,42 @@ load_dotenv()
 FORDEFI_PUBLIC_KEY = os.getenv("FORDEFI_PUBLIC_KEY")
 signature_pub_key = ecdsa.VerifyingKey.from_pem(FORDEFI_PUBLIC_KEY)
 
-def verify_sig(request):
-
+async def verify_sig(request: Request):
+    # Retrieve the signature from the request headers
     signature = request.headers.get("X-Signature")
-
     if signature is None:
         return "Missing signature", HTTPStatus.UNAUTHORIZED
 
-    if not signature_pub_key.verify(
-        signature=base64.b64decode(signature),
-        data=request.get_data(),
-        hashfunc=hashlib.sha256,
-        sigdecode=sigdecode_der,
-    ):
+    # Read the request body asynchronously
+    body = await request.body()
+
+    try:
+        # Verify the signature using the provided public key and body data
+        valid = signature_pub_key.verify(
+            signature=base64.b64decode(signature),
+            data=body,
+            hashfunc=hashlib.sha256,
+            sigdecode=sigdecode_der,
+        )
+    except Exception as e:
+        valid = False
+
+    if not valid:
         return "Invalid signature", HTTPStatus.UNAUTHORIZED
 
-    print(f"Received event: {request.get_data().decode()}")
+    print(f"Received event: {body.decode()}")
     return "OK", HTTPStatus.OK
-
-#### APP ####
 
 @app.post("/fordefi_webhook")
 async def fordefi_webhook(request: Request):
-
-    verify = verify_sig(request)
-    if verify == "OK":
+    # Await the asynchronous verify_sig function
+    status_message, status_code = await verify_sig(request)
+    
+    if status_message == "OK":
         print("Valid request")
         print(request)
+    else:
+        # You might want to handle the error (e.g., return an error response)
+        print(status_message)
 
     return {"message": "Webhook received"}
-
-# start command -> uvicorn app:app --host 0.0.0.0 --port 8000
