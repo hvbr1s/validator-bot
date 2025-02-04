@@ -33,23 +33,23 @@ def verify_signature(signature: str, body: bytes) -> bool:
 @app.post("/fordefi_webhook")
 async def fordefi_webhook(request: Request):
     # 1. Get the signature from headers
-    signature = request.headers.get("X-Signature")
-    if not signature:
-        raise HTTPException(
-            status_code=HTTPStatus.UNAUTHORIZED, 
-            detail="Missing signature"
-        )
+    # signature = request.headers.get("X-Signature")
+    # if not signature:
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.UNAUTHORIZED, 
+    #         detail="Missing signature"
+    #     )
 
     # 2. Read the raw body once
     raw_body = await request.body()
 
     # 3. Verify the signature
-    if not verify_signature(signature, raw_body):
-        print("Invalid signature")
-        raise HTTPException(
-            status_code=HTTPStatus.UNAUTHORIZED,
-            detail="Invalid signature"
-        )
+    # if not verify_signature(signature, raw_body):
+    #     print("Invalid signature")
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.UNAUTHORIZED,
+    #         detail="Invalid signature"
+    #     )
 
     print(f"Received event: {raw_body.decode()}")
 
@@ -91,6 +91,7 @@ async def fordefi_webhook(request: Request):
     if transfers and len(transfers) > 0:
         vault_info = transfers[0].get("from", {}).get("vault", {})
         vault_address = vault_info.get("address")
+        print(f"Origin address: {vault_address}")
     
     if not vault_address:
         raise HTTPException(
@@ -99,6 +100,7 @@ async def fordefi_webhook(request: Request):
         )
     # 7. Extract the receiver address
     receiver_address = transaction_data["mined_result"]["effects"]["balance_changes"][1]["address"]["vault"]["address"]
+    print(f"Destination address: {receiver_address}")
     if not receiver_address:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
@@ -106,10 +108,11 @@ async def fordefi_webhook(request: Request):
         )
 
     # 8. Compare addresses (case-insensitive)
-    if vault_address.lower() == receiver_address.lower():
-        print("Vault address and receiver address are similar.")
+        # If receiver_address is None/null, treat it as matching the vault_address
+    if not receiver_address or vault_address.lower() == receiver_address.lower():
+        print("Vault address and receiver address are similar ✅")
     else:
-        print("Vault address and receiver address are not similar.")
+        print("Vault address and receiver address are not similar ❌")
 
     return {"message": "Webhook received successfully"}
 
