@@ -14,17 +14,11 @@ app = FastAPI()
 load_dotenv()
 FORDEFI_API_USER_TOKEN = os.getenv("FORDEFI_API_USER_TOKEN")
 public_key_path = os.getenv("FORDEFI_PUBLIC_KEY_PATH")
-
 with open(public_key_path, "r") as f:
     FORDEFI_PUBLIC_KEY = f.read()
-
 signature_pub_key = ecdsa.VerifyingKey.from_pem(FORDEFI_PUBLIC_KEY)
 
 def verify_signature(signature: str, body: bytes) -> bool:
-    """
-    Verify the provided signature against the raw request body 
-    using the ecdsa public key.
-    """
     try:
         return signature_pub_key.verify(
             signature=base64.b64decode(signature),
@@ -35,7 +29,6 @@ def verify_signature(signature: str, body: bytes) -> bool:
     except Exception as e:
         print(f"Signature verification error: {e}")
         return False
-
 
 @app.post("/fordefi_webhook")
 async def fordefi_webhook(request: Request):
@@ -71,6 +64,8 @@ async def fordefi_webhook(request: Request):
 
     # 5. Extract the transaction_id from the data (if present)
     transaction_id = data.get("event", {}).get("transaction_id")
+    transaction_data = None
+
     if transaction_id:
         print("Transaction ID:", transaction_id)
         fordefi_url = f"https://api.fordefi.com/api/v1/transactions/{transaction_id}"
@@ -86,33 +81,37 @@ async def fordefi_webhook(request: Request):
     else:
         print("transaction_id field not found in the event data.")
 
-    # 6. Validate vault_address
-    vault_address = data.get("vault", {}).get("address")
-    print(f"Vault address: {vault_address}")
+    if not transaction_data:
+        # If we don't get any transaction data, there's nothing more to do
+        return {"message": "Webhook processed; no transaction data found."}
+
+    # 6. Retrieve the vault_address from transaction_data
+    vault_address = transaction_data.get("vault", {}).get("address")
     if not vault_address:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
-            detail="Vault address not found in the data."
+            detail="Vault address not found in the transaction data."
         )
 
-    # 7. Parse and validate 'raw_data'
+    # 7. Parse raw_data from transaction_data
     try:
-        raw_data_parsed = json.loads(data.get("raw_data", "{}"))
+        raw_data_str = transaction_data.get("raw_data", "{}")
+        raw_data_parsed = json.loads(raw_data_str)
     except json.JSONDecodeError as err:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
             detail="Error parsing raw_data: " + str(err)
         )
 
+    # 8. Extract the receiver address
     receiver_address = raw_data_parsed.get("message", {}).get("receiver")
-    print(f"Receiver address: {receiver_address}")
     if not receiver_address:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
             detail="Receiver address not found in raw_data."
         )
 
-    # 8. Compare addresses (case-insensitive)
+    # 9. Compare addresses (case-insensitive)
     if vault_address.lower() == receiver_address.lower():
         print("Vault address and receiver address are similar.")
     else:
