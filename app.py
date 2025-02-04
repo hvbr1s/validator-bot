@@ -86,35 +86,31 @@ async def fordefi_webhook(request: Request):
         return {"message": "Webhook processed; no transaction data found."}
 
     # 6. Retrieve the vault_address from transaction_data
-    vault_address = transaction_data.get("vault", {}).get("address")
+    vault_address = None
+    transfers = transaction_data.get("mined_result", {}).get("effects", {}).get("transfers", [])
+    if transfers and len(transfers) > 0:
+        vault_info = transfers[0].get("from", {}).get("vault", {})
+        vault_address = vault_info.get("address")
+    
     if not vault_address:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
             detail="Vault address not found in the transaction data."
         )
-
-    # 7. Parse raw_data from transaction_data
-    try:
-        raw_data_str = transaction_data.get("raw_data", "{}")
-        raw_data_parsed = json.loads(raw_data_str)
-    except json.JSONDecodeError as err:
-        raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST,
-            detail="Error parsing raw_data: " + str(err)
-        )
-
-    # 8. Extract the receiver address
-    receiver_address = raw_data_parsed.get("message", {}).get("receiver")
+    # 7. Extract the receiver address
+    receiver_address = transaction_data["mined_result"]["effects"]["balance_changes"][1]["address"]["vault"]["address"]
     if not receiver_address:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
             detail="Receiver address not found in raw_data."
         )
 
-    # 9. Compare addresses (case-insensitive)
+    # 8. Compare addresses (case-insensitive)
     if vault_address.lower() == receiver_address.lower():
         print("Vault address and receiver address are similar.")
     else:
         print("Vault address and receiver address are not similar.")
 
     return {"message": "Webhook received successfully"}
+
+# uvicorn app:app --host 0.0.0.0 --port 8000 --reload
