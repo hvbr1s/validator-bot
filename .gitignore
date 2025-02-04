@@ -13,4 +13,5 @@ wheels/
 
 /secret/*
 event.json
+bin/*
 

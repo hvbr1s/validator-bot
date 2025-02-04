@@ -1,59 +1,119 @@
 import os
+import json
+import requests
 import base64
 import hashlib
 import ecdsa
 from dotenv import load_dotenv
 from ecdsa.util import sigdecode_der
 from http import HTTPStatus
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 
 app = FastAPI()
 
 load_dotenv()
+FORDEFI_API_USER_TOKEN = os.getenv("FORDEFI_API_USER_TOKEN")
 public_key_path = os.getenv("FORDEFI_PUBLIC_KEY_PATH")
+
 with open(public_key_path, "r") as f:
     FORDEFI_PUBLIC_KEY = f.read()
+
 signature_pub_key = ecdsa.VerifyingKey.from_pem(FORDEFI_PUBLIC_KEY)
 
-async def verify_sig(request: Request):
-    # Retrieve the signature from the request headers
-    signature = request.headers.get("X-Signature")
-    if signature is None:
-        return "Missing signature", HTTPStatus.UNAUTHORIZED
-
-    # Read the request body asynchronously
-    body = await request.body()
-
+def verify_signature(signature: str, body: bytes) -> bool:
+    """
+    Verify the provided signature against the raw request body 
+    using the ecdsa public key.
+    """
     try:
-        # Verify the signature using the provided public key and body data
-        valid = signature_pub_key.verify(
+        return signature_pub_key.verify(
             signature=base64.b64decode(signature),
             data=body,
             hashfunc=hashlib.sha256,
             sigdecode=sigdecode_der,
         )
     except Exception as e:
-        print(e)
-        valid = False
+        print(f"Signature verification error: {e}")
+        return False
 
-    if not valid:
-        return "Invalid signature", HTTPStatus.UNAUTHORIZED
-
-    print(f"Received event: {body.decode()}")
-    return "OK", HTTPStatus.OK
 
 @app.post("/fordefi_webhook")
 async def fordefi_webhook(request: Request):
-    # Await the asynchronous verify_sig function
-    status_message, status_code = await verify_sig(request)
-    
-    if status_message == "OK":
-        print("Valid request")
-        print(request)
+    # 1. Get the signature from headers
+    signature = request.headers.get("X-Signature")
+    if not signature:
+        raise HTTPException(
+            status_code=HTTPStatus.UNAUTHORIZED, 
+            detail="Missing signature"
+        )
+
+    # 2. Read the raw body once
+    raw_body = await request.body()
+
+    # 3. Verify the signature
+    if not verify_signature(signature, raw_body):
+        print("Invalid signature")
+        raise HTTPException(
+            status_code=HTTPStatus.UNAUTHORIZED,
+            detail="Invalid signature"
+        )
+
+    print(f"Received event: {raw_body.decode()}")
+
+    # 4. Parse the JSON body into a dictionary
+    try:
+        data = json.loads(raw_body)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="Invalid JSON in request body"
+        )
+
+    # 5. Extract the transaction_id from the data (if present)
+    transaction_id = data.get("event", {}).get("transaction_id")
+    if transaction_id:
+        print("Transaction ID:", transaction_id)
+        fordefi_url = f"https://api.fordefi.com/api/v1/transactions/{transaction_id}"
+        headers = {"Authorization": f"Bearer {FORDEFI_API_USER_TOKEN}"}
+
+        try:
+            response = requests.get(fordefi_url, headers=headers)
+            response.raise_for_status()
+            transaction_data = response.json()
+            print("Transaction data:", transaction_data)
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching transaction data: {e}")
     else:
+        print("transaction_id field not found in the event data.")
 
-        print("Invalid request!")
+    # 6. Validate vault_address
+    vault_address = data.get("vault", {}).get("address")
+    if not vault_address:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="Vault address not found in the data."
+        )
 
-    return {"message": "Webhook received"}
+    # 7. Parse and validate 'raw_data'
+    try:
+        raw_data_parsed = json.loads(data.get("raw_data", "{}"))
+    except json.JSONDecodeError as err:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="Error parsing raw_data: " + str(err)
+        )
 
-# uvicorn app:app --host 0.0.0.0 --port 8000
+    receiver_address = raw_data_parsed.get("message", {}).get("receiver")
+    if not receiver_address:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="Receiver address not found in raw_data."
+        )
+
+    # 8. Compare addresses (case-insensitive)
+    if vault_address.lower() == receiver_address.lower():
+        print("Vault address and receiver address are similar.")
+    else:
+        print("Vault address and receiver address are not similar.")
+
+    return {"message": "Webhook received successfully"}
