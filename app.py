@@ -88,6 +88,7 @@ async def fordefi_webhook(request: Request):
 
     # 6. Validate vault_address
     vault_address = data.get("vault", {}).get("address")
+    print(f"Vault address: {vault_address}")
     if not vault_address:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
@@ -104,6 +105,7 @@ async def fordefi_webhook(request: Request):
         )
 
     receiver_address = raw_data_parsed.get("message", {}).get("receiver")
+    print(f"Receiver address: {receiver_address}")
     if not receiver_address:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
