@@ -32,24 +32,42 @@ def verify_signature(signature: str, body: bytes) -> bool:
 
 @app.post("/fordefi_webhook")
 async def fordefi_webhook(request: Request):
+    """
+    This app implements a Fordefi webhook endpoint for monitoring 1inch DEX transactions.
+    It verifies Fordefi webhook signatures and processes transaction data to prevent potential
+    malicious uses of 1inch 'Swap and transfer to another address' feature.
+
+    Key functionality:
+    - Listens for Fordefi webhooks containing transaction data
+    - Verifies webhook signatures using ECDSA
+    - Fetches detailed transaction data from Fordefi API
+    - Specifically monitors 1inch `Order` messages
+    - Checks if a message combines a swap with a transfer
+    - If the receiver of the transfer differs from the swap initiator,
+    the transaction is automatically aborted as a security measure
+
+    This protection ensures that users cannot combine a swap operation with
+    a transfer to an unauthorized address, preventing
+    unauthorized fund movements using the 1inch DEX.
+    """
     # 1. Get the signature from headers
-    # signature = request.headers.get("X-Signature")
-    # if not signature:
-    #     raise HTTPException(
-    #         status_code=HTTPStatus.UNAUTHORIZED, 
-    #         detail="Missing signature"
-    #     )
+    signature = request.headers.get("X-Signature")
+    if not signature:
+        raise HTTPException(
+            status_code=HTTPStatus.UNAUTHORIZED, 
+            detail="Missing signature"
+        )
 
     # 2. Read the raw body once
     raw_body = await request.body()
 
     # 3. Verify the signature
-    # if not verify_signature(signature, raw_body):
-    #     print("Invalid signature")
-    #     raise HTTPException(
-    #         status_code=HTTPStatus.UNAUTHORIZED,
-    #         detail="Invalid signature"
-    #     )
+    if not verify_signature(signature, raw_body):
+        print("Invalid signature")
+        raise HTTPException(
+            status_code=HTTPStatus.UNAUTHORIZED,
+            detail="Invalid signature"
+        )
 
     print(f"Received event: {raw_body.decode()}")
 
@@ -85,6 +103,7 @@ async def fordefi_webhook(request: Request):
         # If we don't get any transaction data, there's nothing more to do
         return {"message": "Webhook processed; no transaction data found."}
 
+    ### 1INCH PARSING ###
     # 6. Retrieve the vault_address from transaction_data
     vault_address = None
     transfers = transaction_data.get("mined_result", {}).get("effects", {}).get("transfers", [])
@@ -108,11 +127,23 @@ async def fordefi_webhook(request: Request):
         )
 
     # 8. Compare addresses (case-insensitive)
-        # If receiver_address is None/null, treat it as matching the vault_address
+    # If receiver_address is None/null, we treat it as matching the vault_address
     if not receiver_address or vault_address.lower() == receiver_address.lower():
         print("Vault address and receiver address are similar ✅")
     else:
+        # Else if this is a swap + transfer and the ultimate receiver is not the swapper, we abort
         print("Vault address and receiver address are not similar ❌")
+        # Abort transaction
+        fordefi_url = f"https://api.fordefi.com/api/v1/transactions/{transaction_id}/abort"
+        headers = {"Authorization": f"Bearer {FORDEFI_API_USER_TOKEN}"}
+
+        try:
+            response = requests.post(fordefi_url, headers=headers)
+            response.raise_for_status()
+            transaction_data = response.json()
+            print("Result:", transaction_data)
+        except requests.exceptions.RequestException as e:
+            print(f"Error aborting transaction: {e}")
 
     return {"message": "Webhook received successfully"}
 
