@@ -6,6 +6,7 @@ dist/
 wheels/
 *.egg-info
 .DS_Store
+uv.lock
 
 # Virtual environments
 .venv
@@ -14,4 +15,5 @@ wheels/
 /secret/*
 event.json
 bin/*
+examples/*
 
