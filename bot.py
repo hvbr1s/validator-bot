@@ -19,6 +19,7 @@ app = FastAPI()
 
 load_dotenv()
 FORDEFI_API_USER_TOKEN = os.getenv("FORDEFI_API_USER_TOKEN")
+HEALTH_CHECK_BOT_TOKEN = os.getenv("HEALTH_CHECK_BOT_TOKEN")
 public_key_path = os.getenv("FORDEFI_PUBLIC_KEY_PATH")
 
 with open(public_key_path, "r") as f:
@@ -81,10 +82,10 @@ def wait_for_transaction_creation(transaction_id: str, max_wait_time: int = 300)
         
         # Check for aborted state FIRST, before the generic check
         if current_state == "aborted":
-            print("ℹ️ Transaction already aborted - running validation for audit purposes")
+            print("ℹ️ Transaction is already in aborted state.")
             return transaction_data
         
-        if current_state not in target_states:
+        if current_state in target_states:
             print(f"✅ Transaction is now in created state: {current_state}")
             return transaction_data
             
@@ -97,6 +98,12 @@ def wait_for_transaction_creation(transaction_id: str, max_wait_time: int = 300)
 
 def abort_transaction(transaction_id: str, reason: str) -> None:
     """Abort a transaction with the given reason"""
+    # First, check if the transaction is already aborted
+    transaction_data = get_transaction_data(transaction_id)
+    if transaction_data.get("state") == "aborted":
+        print(f"ℹ️ Transaction {transaction_id} is already aborted. No action needed.")
+        return
+
     url = f"https://api.fordefi.com/api/v1/transactions/{transaction_id}/abort"
     headers = {"Authorization": f"Bearer {FORDEFI_API_USER_TOKEN}"}
 
@@ -206,10 +213,60 @@ def validate_hex_data(transaction_data: Dict) -> None:
     except subprocess.SubprocessError as e:
         raise TransactionAbortError(f"Unable to decode hex data: {e}")
 
+def approve_transaction(transaction_id: str, access_token: str) -> None:
+    """Approve a transaction"""
+    url = f"https://api.fordefi.com/api/v1/transactions/{transaction_id}/approve"
+    headers = {"Authorization": f"Bearer {access_token}"}
 
-def validate_transaction(transaction_data: Dict) -> None:
+    try:
+        response = requests.post(url, headers=headers)
+        response.raise_for_status()
+        print(f"✅ Transaction approved successfully")
+    except requests.exceptions.RequestException as e:
+        # Get more details about the error response
+        response_details = ""
+        request_id = ""
+        
+        if hasattr(e, 'response') and e.response is not None:
+            response_details = f"Status: {e.response.status_code}"
+            
+            # Try to get request ID from headers
+            if 'x-request-id' in e.response.headers:
+                request_id = e.response.headers['x-request-id']
+                response_details += f", Request ID: {request_id}"
+            
+            # Try to get response body for more context
+            try:
+                response_body = e.response.text
+                if response_body:
+                    response_details += f", Response: {response_body}"
+            except:
+                pass
+        
+        error_message = f"❌ Error approving transaction: {e}"
+        if response_details:
+            error_message += f" ({response_details})"
+        print(error_message)
+        
+        # Check if this is a 400 error - might be expected (already approved or in invalid state)
+        if hasattr(e, 'response') and e.response is not None and e.response.status_code == 400:
+            print("⚠️ Got 400 error - transaction might already be approved or in invalid state")
+            # Don't raise HTTP 500 for 400 errors - just log and continue
+            return
+        
+        # For other errors, still raise 500
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail=f"Failed to approve transaction. {response_details}"
+        )
+
+def validate_transaction(transaction_data: Dict, transaction_id) -> None:
     """Run all transaction validations"""
     print("🔍 Validating transaction...")
+
+    print("🚀 Checking is Validator bot is online...")
+    approve_transaction(transaction_id, HEALTH_CHECK_BOT_TOKEN)
+    print("✅ Validator bot is online!")
     
     # Validate EIP-712 orders (CoWSwap, 1inch)
     validate_eip_712_order(transaction_data)
@@ -218,6 +275,8 @@ def validate_transaction(transaction_data: Dict) -> None:
     validate_hex_data(transaction_data)
     
     print("✅ Transaction validation passed")
+
+    approve_transaction(transaction_id, FORDEFI_API_USER_TOKEN)
 
 
 @app.post("/")
@@ -237,6 +296,7 @@ async def fordefi_webhook(request: Request):
     if not verify_signature(signature, raw_body):
         raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Invalid signature")
 
+
     # Parse webhook data
     try:
         data = json.loads(raw_body)
@@ -250,15 +310,19 @@ async def fordefi_webhook(request: Request):
         return {"message": "No transaction ID found"}
 
     print(f"🔍 Processing transaction: {transaction_id}")
-
     # Wait for transaction to be created
     transaction_data = wait_for_transaction_creation(transaction_id)
     if not transaction_data:
         return {"message": "Timeout: Transaction did not reach created state"}
 
+    # If transaction is already aborted, no need to proceed
+    if transaction_data.get("state") == "aborted":
+        print(f"ℹ️ Transaction {transaction_id} is already aborted. Stopping processing.")
+        return {"message": "Transaction already aborted"}
+
     # Validate transaction
     try:
-        validate_transaction(transaction_data)
+        validate_transaction(transaction_data, transaction_id)
         return {"message": "Transaction validated successfully"}
         
     except TransactionAbortError as e:
