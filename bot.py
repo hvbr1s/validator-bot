@@ -80,7 +80,6 @@ def wait_for_transaction_creation(transaction_id: str, max_wait_time: int = 300)
         current_state = transaction_data.get("state")
         print(f"Current transaction state: {current_state}")
         
-        # Check for aborted state FIRST, before the generic check
         if current_state == "aborted":
             print("ℹ️ Transaction is already in aborted state.")
             return transaction_data
@@ -98,7 +97,6 @@ def wait_for_transaction_creation(transaction_id: str, max_wait_time: int = 300)
 
 def abort_transaction(transaction_id: str, reason: str) -> None:
     """Abort a transaction with the given reason"""
-    # First, check if the transaction is already aborted
     transaction_data = get_transaction_data(transaction_id)
     if transaction_data.get("state") == "aborted":
         print(f"ℹ️ Transaction {transaction_id} is already aborted. No action needed.")
@@ -140,7 +138,6 @@ def abort_transaction(transaction_id: str, reason: str) -> None:
         # Check if this is a 400 error - might be expected (already aborted)
         if hasattr(e, 'response') and e.response is not None and e.response.status_code == 400:
             print("⚠️ Got 400 error - transaction might already be aborted or in invalid state")
-            # Don't raise HTTP 500 for 400 errors - just log and continue
             return
         
         # For other errors, still raise 500
