@@ -64,6 +64,7 @@ def get_transaction_data(transaction_id: str) -> Dict:
 def wait_for_transaction_creation(transaction_id: str, max_wait_time: int = 300) -> Dict:
     """Poll until transaction is created and ready for validation"""
     target_states = ["waiting_for_approval"]
+    terminal_states = ["aborted", "completed", "approved", "stuck"]
     start_time = time.time()
     poll_interval = 5
     
@@ -80,8 +81,8 @@ def wait_for_transaction_creation(transaction_id: str, max_wait_time: int = 300)
         current_state = transaction_data.get("state")
         print(f"Current transaction state: {current_state}")
         
-        if current_state == "aborted":
-            print("ℹ️ Transaction is already in aborted state.")
+        if current_state in terminal_states:
+            print(f"ℹ️ Transaction is already in a terminal state: {current_state}")
             return transaction_data
         
         if current_state in target_states:
@@ -108,7 +109,7 @@ def abort_transaction(transaction_id: str, reason: str) -> None:
     try:
         response = requests.post(url, headers=headers)
         response.raise_for_status()
-        print(f"✅ Transaction aborted: {reason}")
+        print(f"🪓🪓 Transaction aborted: {reason}")
     except requests.exceptions.RequestException as e:
         # Get more details about the error response
         response_details = ""
@@ -264,6 +265,8 @@ def validate_transaction(transaction_data: Dict, transaction_id) -> None:
     print("🚀 Checking is Validator bot is online...")
     approve_transaction(transaction_id, HEALTH_CHECK_BOT_TOKEN)
     print("✅ Validator bot is online!")
+
+    print("Transaction ID: ", transaction_data )
     
     # Validate EIP-712 orders (CoWSwap, 1inch)
     validate_eip_712_order(transaction_data)
@@ -312,10 +315,12 @@ async def fordefi_webhook(request: Request):
     if not transaction_data:
         return {"message": "Timeout: Transaction did not reach created state"}
 
-    # If transaction is already aborted, no need to proceed
-    if transaction_data.get("state") == "aborted":
-        print(f"ℹ️ Transaction {transaction_id} is already aborted. Stopping processing.")
-        return {"message": "Transaction already aborted"}
+    # If transaction is already in a terminal state, no need to proceed
+    state = transaction_data.get("state")
+    if state in ["aborted", "completed", "approved", "stuck"]:
+        message = f"Transaction {transaction_id} is already in '{state}' state. Stopping processing."
+        print(f"ℹ️ {message}")
+        return {"message": message}
 
     # Validate transaction
     try:
