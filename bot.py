@@ -64,7 +64,7 @@ def get_transaction_data(transaction_id: str) -> Dict:
 def wait_for_transaction_creation(transaction_id: str, max_wait_time: int = 300) -> Dict:
     """Poll until transaction is created and ready for validation"""
     target_states = ["waiting_for_approval"]
-    terminal_states = ["aborted", "completed", "approved", "stuck"]
+    terminal_states = ["aborted", "completed", "approved", "stuck", "mined"]
     start_time = time.time()
     poll_interval = 5
     
@@ -262,11 +262,11 @@ def validate_transaction(transaction_data: Dict, transaction_id) -> None:
     """Run all transaction validations"""
     print("🔍 Validating transaction...")
 
-    print("🚀 Checking is Validator bot is online...")
+    print("👀 Checking if Validator bot is online...")
     approve_transaction(transaction_id, HEALTH_CHECK_BOT_TOKEN)
     print("✅ Validator bot is online!")
 
-    print("Transaction ID: ", transaction_data )
+    #print("Transaction ID: ", transaction_data )
     
     # Validate EIP-712 orders (CoWSwap, 1inch)
     validate_eip_712_order(transaction_data)
