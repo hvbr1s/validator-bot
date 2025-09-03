@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from ecdsa.util import sigdecode_der
 from http import HTTPStatus
 from fastapi import FastAPI, Request, HTTPException
-from typing import Dict, Optional
+from typing import Dict
 
 ORIGIN_VAULT = "0x8BFCF9e2764BC84DE4BBd0a0f5AAF19F47027A73" # Change to your Vault's address
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
@@ -150,20 +150,32 @@ def abort_transaction(transaction_id: str, reason: str) -> None:
 
 def validate_eip_712_order(transaction_data: Dict) -> None:
     """Validate EIP-712 orders"""
+    print("🔍 Validating EIP-712 order...")
     raw_data = transaction_data.get("raw_data")
     if not raw_data:
+        print("ℹ️ No raw_data found, skipping EIP-712 validation")
         return
+        
+    print(f"🔍 Raw data type: {type(raw_data)}")
+    print(f"🔍 Raw data preview: {str(raw_data)[:200]}...")
         
     try:
         if isinstance(raw_data, str):
             parsed_data = json.loads(raw_data)
+            print(f"🔍 Parsed data keys: {list(parsed_data.keys())}")
+            
             message = parsed_data.get("message", {})
+            print(f"🔍 Message keys: {list(message.keys()) if message else 'No message found'}")
+            
             receiver = message.get("receiver", "").lower()
             
             if not receiver:
+                print("ℹ️ No receiver found in message, skipping receiver validation")
                 return
                 
             print(f"🔍 Order receiver: {receiver}")
+            print(f"🔍 ORIGIN_VAULT: {ORIGIN_VAULT.lower()}")
+            print(f"🔍 ZERO_ADDRESS: {ZERO_ADDRESS}")
             
             # Allow zero address (valid) or ORIGIN_VAULT
             if receiver == ZERO_ADDRESS:
@@ -171,29 +183,40 @@ def validate_eip_712_order(transaction_data: Dict) -> None:
             elif receiver == ORIGIN_VAULT.lower():
                 print(f"✅ Receiver matches ORIGIN_VAULT")
             else:
+                print(f"❌ Unauthorized receiver found: {receiver}")
                 raise TransactionAbortError(f"Unauthorized receiver: {receiver}")
                 
-    except json.JSONDecodeError:
-        print("⚠️ raw_data is not valid JSON")
+    except json.JSONDecodeError as e:
+        print(f"⚠️ raw_data is not valid JSON: {e}")
     except TransactionAbortError:
         raise
     except Exception as e:
         print(f"⚠️ Error parsing raw_data: {e}")
+        print(f"🔍 Exception type: {type(e).__name__}")
 
 
 def validate_hex_data(transaction_data: Dict) -> None:
     """Validate hex data contains ORIGIN_VAULT"""
+    print("🔍 Validating hex data...")
     hex_data = transaction_data.get("hex_data")
     if not hex_data:
+        print("ℹ️ No hex_data found, skipping hex data validation")
         return
         
+    print(f"🔍 Hex data: {hex_data[:100]}...")
+    
     # Skip validation for approval transactions
-    contract_method = transaction_data.get("parsed_data", {}).get("method")
+    parsed_data = transaction_data.get("parsed_data", {})
+    contract_method = parsed_data.get("method")
+    print(f"🔍 Contract method: {contract_method}")
+    print(f"🔍 Parsed data keys: {list(parsed_data.keys()) if parsed_data else 'No parsed data'}")
+    
     if contract_method == "approve":
-        print("This is an approval, skipping hex data validation")
+        print("ℹ️ This is an approval transaction, skipping hex data validation")
         return
         
     try:
+        print("🔍 Attempting to decode hex data with cast...")
         # Decode using cast
         result = subprocess.run(
             ["cast", "4byte-decode", hex_data], 
@@ -201,15 +224,27 @@ def validate_hex_data(transaction_data: Dict) -> None:
             text=True
         )
         decoded_output = result.stdout or ""
+        decoded_error = result.stderr or ""
+        
+        print(f"🔎 Cast return code: {result.returncode}")
         print(f"🔎 Decoded function signature: {decoded_output}")
+        if decoded_error:
+            print(f"🔎 Cast stderr: {decoded_error}")
         
         if ORIGIN_VAULT.lower() not in decoded_output.lower():
+            print(f"❌ ORIGIN_VAULT ({ORIGIN_VAULT.lower()}) not found in decoded data")
+            print(f"🔍 Searching for ORIGIN_VAULT in: {decoded_output.lower()}")
             raise TransactionAbortError("ORIGIN_VAULT not found in decoded data")
         else:
             print(f"✅ ORIGIN_VAULT found in decoded data")
             
     except subprocess.SubprocessError as e:
+        print(f"❌ Subprocess error when decoding hex data: {e}")
         raise TransactionAbortError(f"Unable to decode hex data: {e}")
+    except Exception as e:
+        print(f"❌ Unexpected error in hex data validation: {e}")
+        print(f"🔍 Exception type: {type(e).__name__}")
+        raise TransactionAbortError(f"Error validating hex data: {e}")
 
 def approve_transaction(transaction_id: str, access_token: str) -> None:
     """Approve a transaction"""
@@ -260,23 +295,39 @@ def approve_transaction(transaction_id: str, access_token: str) -> None:
 
 def validate_transaction(transaction_data: Dict, transaction_id) -> None:
     """Run all transaction validations"""
-    print("🔍 Validating transaction...")
+    print("🔍 Starting transaction validation...")
+    print(f"🔍 Transaction ID: {transaction_id}")
+    print(f"🔍 Transaction keys: {list(transaction_data.keys())}")
+    
+    # Log key transaction details
+    print(f"🔍 From: {transaction_data.get('from', {}).get('address', 'unknown')}")
+    print(f"🔍 To: {transaction_data.get('to', {}).get('address', 'unknown')}")
+    print(f"🔍 Value: {transaction_data.get('value', 'unknown')}")
+    print(f"🔍 Chain: {transaction_data.get('chain', {}).get('name', 'unknown')}")
 
     print("👀 Checking if Validator bot is online...")
     approve_transaction(transaction_id, HEALTH_CHECK_BOT_TOKEN)
     print("✅ Validator bot is online!")
-
-    #print("Transaction ID: ", transaction_data )
     
     # Validate EIP-712 orders (CoWSwap, 1inch)
+    print("🔍 Starting EIP-712 validation...")
     validate_eip_712_order(transaction_data)
+    print("✅ EIP-712 validation completed")
     
     # Validate hex data
+    print("🔍 Starting hex data validation...")
     validate_hex_data(transaction_data)
+    print("✅ Hex data validation completed")
     
-    print("✅ Transaction validation passed")
-
+    print("✅ All transaction validations passed")
+    print("🔍 Approving transaction with main bot token...")
     approve_transaction(transaction_id, FORDEFI_API_USER_TOKEN)
+    print("✅ Transaction approved successfully")
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "online"}
 
 
 @app.post("/")
@@ -296,39 +347,70 @@ async def fordefi_webhook(request: Request):
     if not verify_signature(signature, raw_body):
         raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Invalid signature")
 
-
     # Parse webhook data
     try:
         data = json.loads(raw_body)
-        print("📝 Received webhook event")
-    except json.JSONDecodeError:
+        print(f"📝 Received webhook {data["webhook_id"]}")
+        print(f"Event ID: {data["event_id"]}")
+    except json.JSONDecodeError as e:
+        print(f"❌ Failed to parse webhook JSON: {e}")
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Invalid JSON")
 
-    # Extract transaction ID from webhook
-    transaction_id = data.get("event", {}).get("transaction_id")
+    event_data = data.get("event", {})
+    transaction_data = event_data
+    
+    if not transaction_data or not transaction_data.get("id"):
+        print("❌ No valid transaction data found in webhook")
+        print(f"🔍 Available event data: {json.dumps(event_data, indent=2)[:500]}...")
+        return {"message": "No valid transaction data found in webhook"}
+
+    # Extract transaction ID for logging and API calls
+    transaction_id = transaction_data.get("id")
     if not transaction_id:
-        return {"message": "No transaction ID found"}
+        print("❌ No transaction ID found in transaction data")
+        print(f"🔍 Transaction data keys: {list(transaction_data.keys())}")
+        return {"message": "No transaction ID found in transaction data"}
 
     print(f"🔍 Processing transaction: {transaction_id}")
-    # Wait for transaction to be created
-    transaction_data = wait_for_transaction_creation(transaction_id)
-    if not transaction_data:
-        return {"message": "Timeout: Transaction did not reach created state"}
+    print(f"🔍 Transaction type: {transaction_data.get('type', 'unknown')}")
+    print(f"🔍 Transaction direction: {transaction_data.get('direction', 'unknown')}")
 
-    # If transaction is already in a terminal state, no need to proceed
+    # Check if transaction is in a state that requires validation
     state = transaction_data.get("state")
-    if state in ["aborted", "completed", "approved", "stuck"]:
-        message = f"Transaction {transaction_id} is already in '{state}' state. Stopping processing."
-        print(f"ℹ️ {message}")
-        return {"message": message}
+    print(f"Current transaction state: {state}")
+    
+    # Only validate transactions that are waiting for approval
+    if state != "waiting_for_approval":
+        if state in ["aborted", "completed", "approved", "stuck", "signed", "pushed_to_blockchain", "mined"]:
+            message = f"Transaction {transaction_id} is in '{state}' state. No validation needed."
+            print(f"ℹ️ {message}")
+            return {"message": message}
+        else:
+            # For other states, we might want to wait or handle differently
+            message = f"Transaction {transaction_id} is in '{state}' state. Skipping validation."
+            print(f"⚠️ {message}")
+            return {"message": message}
 
     # Validate transaction
     try:
+        print("🚀 Starting transaction validation process...")
         validate_transaction(transaction_data, transaction_id)
+        print("🎉 Transaction validation process completed successfully")
         return {"message": "Transaction validated successfully"}
         
     except TransactionAbortError as e:
+        print(f"🚫 Transaction validation failed: {e}")
+        print("🪓 Attempting to abort transaction...")
         abort_transaction(transaction_id, str(e))
         return {"message": f"Transaction aborted: {e}"}
+    except Exception as e:
+        print(f"💥 Unexpected error during validation: {e}")
+        print(f"🔍 Exception type: {type(e).__name__}")
+        print("🪓 Attempting to abort transaction due to unexpected error...")
+        try:
+            abort_transaction(transaction_id, f"Unexpected validation error: {e}")
+        except Exception as abort_error:
+            print(f"❌ Failed to abort transaction after error: {abort_error}")
+        return {"message": f"Transaction validation failed with unexpected error: {e}"}
 
 # uvicorn bot:app --host 0.0.0.0 --port 8080 --reload
